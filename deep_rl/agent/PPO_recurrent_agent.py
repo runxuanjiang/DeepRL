@@ -18,7 +18,7 @@ class PPORecurrentAgent(BaseAgent):
             self.network = config.network
         else:
             self.network = config.network_fn()
-        self.network.to(torch.device('cuda'))
+        #self.network.to(torch.device('cuda'))
         self.opt = config.optimizer_fn(self.network.parameters())
         self.total_steps = 0
         self.recurrent_states = None
