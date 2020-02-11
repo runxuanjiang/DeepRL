@@ -7,6 +7,7 @@
 from ..network import *
 from ..component import *
 from .BaseAgent import *
+import pdb
 
 
 class PPORecurrentAgent(BaseAgent):
@@ -18,7 +19,7 @@ class PPORecurrentAgent(BaseAgent):
             self.network = config.network
         else:
             self.network = config.network_fn()
-        self.network.to(torch.device('cuda'))
+        #self.network.to(torch.device('cuda'))
         self.opt = config.optimizer_fn(self.network.parameters())
         self.total_steps = 0
         self.recurrent_states = None
@@ -44,9 +45,20 @@ class PPORecurrentAgent(BaseAgent):
             self.record_online_return(info)
             rewards = config.reward_normalizer(rewards)
             storage.add(prediction)
+
+            dihedrals = torch.tensor(states[0][1])
+            dihedrals = dihedrals.unsqueeze(0)
+            states = states[0][0]
+            states = states.to_data_list()
+            states = states[0]
+            storage.add({'edge_attr': states.edge_attr.unsqueeze(0),
+                         'edge_index': states.edge_index.unsqueeze(0),
+                         'pos': states.pos.unsqueeze(0),
+                         'x': states.x.unsqueeze(0),
+                         'dihedral': dihedrals})
+
             storage.add({'r': tensor(rewards).unsqueeze(-1),
-                         'm': tensor(1 - terminals).unsqueeze(-1),
-                         's': tensor(states)})
+                         'm': tensor(1 - terminals).unsqueeze(-1)})
             states = next_states
             self.total_steps += config.num_workers
 
@@ -67,7 +79,8 @@ class PPORecurrentAgent(BaseAgent):
             storage.adv[i] = advantages.detach()
             storage.ret[i] = returns.detach()
 
-        states, actions, log_probs_old, returns, advantages = storage.cat(['s', 'a', 'log_pi_a', 'ret', 'adv'])
+        actions, log_probs_old, returns, advantages = storage.cat(['a', 'log_pi_a', 'ret', 'adv'])
+        edge_attr, edge_index, pos, x, dihedral = storage.cat(['edge_attr', 'edge_index', 'pos', 'x', 'dihedral'])
         actions = actions.detach()
         log_probs_old = log_probs_old.detach()
         advantages = (advantages - advantages.mean()) / advantages.std()

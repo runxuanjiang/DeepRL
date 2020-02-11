@@ -21,7 +21,8 @@ def tensor(x):
     if isinstance(x, torch.Tensor):
         return x
     x = np.asarray(x, dtype=np.float)
-    x = torch.tensor(x, device=torch.device('cuda'), dtype=torch.float32)
+    #TODO: Change device back to cuda
+    x = torch.tensor(x, device=torch.device('cpu'), dtype=torch.float32)
     return x
 
 
