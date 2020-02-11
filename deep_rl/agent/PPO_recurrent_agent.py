@@ -26,10 +26,13 @@ class PPORecurrentAgent(BaseAgent):
         self.done = True
 
     def step(self):
+        print("stepping")
         config = self.config
         storage = Storage(config.rollout_length)
         states = self.states
         for _ in range(config.rollout_length):
+
+            print("rollout")
 
             if self.done:
                 prediction, self.recurrent_states = self.network(states)
