@@ -8,6 +8,8 @@ from ..network import *
 from ..component import *
 from .BaseAgent import *
 import pdb
+from torch_geometric.data import Data, Batch
+from torch_geometric.transforms import Distance
 
 
 class PPORecurrentAgent(BaseAgent):
@@ -44,7 +46,12 @@ class PPORecurrentAgent(BaseAgent):
             next_states, rewards, terminals, info = self.task.step(to_np(prediction['a']))
             self.record_online_return(info)
             rewards = config.reward_normalizer(rewards)
-            storage.add(prediction)
+            storage.add({
+                'a': prediction['a'].unsqueeze(0),
+                'log_pi_a': prediction['log_pi_a'],
+                'ent': prediction['ent'],
+                'v': prediction['v'],
+            })
 
             dihedrals = torch.tensor(states[0][1])
             dihedrals = dihedrals.unsqueeze(0)
@@ -86,16 +93,33 @@ class PPORecurrentAgent(BaseAgent):
         advantages = (advantages - advantages.mean()) / advantages.std()
 
         for _ in range(config.optimization_epochs):
-            sampler = random_sample(np.arange(states.size(0)), config.mini_batch_size)
+            sampler = random_sample(np.arange(edge_attr.size(0)), config.mini_batch_size)
             for batch_indices in sampler:
                 batch_indices = tensor(batch_indices).long()
-                sampled_states = states[batch_indices]
                 sampled_actions = actions[batch_indices]
                 sampled_log_probs_old = log_probs_old[batch_indices]
                 sampled_returns = returns[batch_indices]
                 sampled_advantages = advantages[batch_indices]
 
-                prediction = self.network(sampled_states, sampled_actions)
+                sampled_edge_attr = edge_attr[batch_indices]
+                sampled_edge_index = edge_index[batch_indices]
+                sampled_pos = pos[batch_indices]
+                sampled_x = x[batch_indices]
+                sampled_dihedral = dihedral[batch_indices]
+
+                sampled_states = []
+
+                for i, _ in enumerate(sampled_edge_attr):
+                    data = Data(
+                        edge_attr = sampled_edge_attr[i],
+                        edge_index = sampled_edge_index[i],
+                        pos = sampled_pos[i],
+                        x = sampled_x[i]
+                    )
+                    data = Batch.from_data_list([data])
+                    sampled_states.append((data, sampled_dihedral[i].tolist()))
+                
+                prediction, _ = self.network(sampled_states)
                 ratio = (prediction['log_pi_a'] - sampled_log_probs_old).exp()
                 obj = ratio * sampled_advantages
                 obj_clipped = ratio.clamp(1.0 - self.config.ppo_ratio_clip,
