@@ -11,6 +11,8 @@ import pdb
 from torch_geometric.data import Data, Batch
 from torch_geometric.transforms import Distance
 
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 
 class PPORecurrentAgent(BaseAgent):
     def __init__(self, config):
@@ -21,7 +23,7 @@ class PPORecurrentAgent(BaseAgent):
             self.network = config.network
         else:
             self.network = config.network_fn()
-        #self.network.to(torch.device('cuda'))
+        self.network.to(device)
         self.opt = config.optimizer_fn(self.network.parameters())
         self.total_steps = 0
         self.recurrent_states = None
@@ -29,13 +31,10 @@ class PPORecurrentAgent(BaseAgent):
         self.done = True
 
     def step(self):
-        print("stepping")
         config = self.config
         storage = Storage(config.rollout_length)
         states = self.states
         for _ in range(config.rollout_length):
-
-            print("rollout")
 
             if self.done:
                 prediction, self.recurrent_states = self.network(states)
