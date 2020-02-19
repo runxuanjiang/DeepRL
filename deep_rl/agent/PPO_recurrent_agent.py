@@ -35,14 +35,23 @@ class PPORecurrentAgent(BaseAgent):
         storage = Storage(config.rollout_length)
         states = self.states
         for _ in range(config.rollout_length):
+            start = time.time()
 
             if self.done:
                 prediction, self.recurrent_states = self.network(states)
             else:
                 prediction, self.recurrent_states = self.network(states, self.recurrent_states)
+            end = time.time()
+
+            self.logger.add_scalar('forward_pass_time', end-start, self.total_steps)
 
             self.done = False
+
+            start = time.time()
             next_states, rewards, terminals, info = self.task.step(to_np(prediction['a']))
+            end = time.time()
+            self.logger.add_scalar('env_step_time', end-start, self.total_steps)
+
             self.record_online_return(info)
             rewards = config.reward_normalizer(rewards)
             storage.add({
@@ -57,23 +66,28 @@ class PPORecurrentAgent(BaseAgent):
             states = states[0][0]
             states = states.to_data_list()
             states = states[0]
-            storage.add({'edge_attr': states.edge_attr.unsqueeze(0),
-                         'edge_index': states.edge_index.unsqueeze(0),
-                         'pos': states.pos.unsqueeze(0),
-                         'x': states.x.unsqueeze(0),
+            storage.add({'edge_attr': states.edge_attr.unsqueeze(0).cuda(),
+                         'edge_index': states.edge_index.unsqueeze(0).cuda(),
+                         'pos': states.pos.unsqueeze(0).cuda(),
+                         'x': states.x.unsqueeze(0).cuda(),
                          'dihedral': dihedrals})
 
-            storage.add({'r': tensor(rewards).unsqueeze(-1),
-                         'm': tensor(1 - terminals).unsqueeze(-1)})
+            storage.add({'r': tensor(rewards).unsqueeze(-1).cuda(),
+                         'm': tensor(1 - terminals).unsqueeze(-1).cuda()})
             states = next_states
             self.total_steps += config.num_workers
 
         self.states = states
         prediction, self.recurrent_states = self.network(states)
-        storage.add(prediction)
+        storage.add({
+            'a': prediction['a'].unsqueeze(0),
+            'log_pi_a': prediction['log_pi_a'],
+            'ent': prediction['ent'],
+            'v': prediction['v'],
+        })
         storage.placeholder()
 
-        advantages = tensor(np.zeros((config.num_workers, 1)))
+        advantages = tensor(np.zeros((config.num_workers, 1))).cuda()
         returns = prediction['v'].detach()
         for i in reversed(range(config.rollout_length)):
             returns = storage.r[i] + config.discount * storage.m[i] * returns
@@ -85,11 +99,16 @@ class PPORecurrentAgent(BaseAgent):
             storage.adv[i] = advantages.detach()
             storage.ret[i] = returns.detach()
 
-        actions, log_probs_old, returns, advantages = storage.cat(['a', 'log_pi_a', 'ret', 'adv'])
+        actions, log_probs_old, returns, advantages, entropy = storage.cat(['a', 'log_pi_a', 'ret', 'adv', 'ent'])
         edge_attr, edge_index, pos, x, dihedral = storage.cat(['edge_attr', 'edge_index', 'pos', 'x', 'dihedral'])
         actions = actions.detach()
         log_probs_old = log_probs_old.detach()
         advantages = (advantages - advantages.mean()) / advantages.std()
+
+        entropy_loss = entropy.mean()
+
+        self.logger.add_scalar('advantages', advantages.mean(), self.total_steps)
+        self.logger.add_scalar('entropy_loss', entropy_loss, self.total_steps)
 
         for _ in range(config.optimization_epochs):
             sampler = random_sample(np.arange(edge_attr.size(0)), config.mini_batch_size)
@@ -126,6 +145,10 @@ class PPORecurrentAgent(BaseAgent):
                 policy_loss = -torch.min(obj, obj_clipped).mean() - config.entropy_weight * prediction['ent'].mean()
 
                 value_loss = 0.5 * (sampled_returns - prediction['v']).pow(2).mean()
+                
+                self.logger.add_scalar('policy_loss', policy_loss, self.total_steps)
+                self.logger.add_scalar('value_loss', value_loss, self.total_steps)
+
 
                 self.opt.zero_grad()
                 (policy_loss + value_loss).backward()

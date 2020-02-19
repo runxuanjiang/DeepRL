@@ -18,7 +18,7 @@ class A2CRecurrentAgent(BaseAgent):
             self.network = config.network
         else:
             self.network = config.network_fn()
-        #self.network.to(torch.device('cuda'))
+        self.network.to(torch.device('cuda'))
         self.optimizer = config.optimizer_fn(self.network.parameters())
         self.total_steps = 0
         self.states = self.task.reset()
@@ -52,8 +52,8 @@ class A2CRecurrentAgent(BaseAgent):
             self.record_online_return(info)
             rewards = config.reward_normalizer(rewards)
             storage.add(prediction)
-            storage.add({'r': tensor(rewards).unsqueeze(-1),#.cuda(),
-                         'm': tensor(1 - terminals).unsqueeze(-1)})#.cuda()})
+            storage.add({'r': tensor(rewards).unsqueeze(-1).cuda(),
+                         'm': tensor(1 - terminals).unsqueeze(-1).cuda()})
 
             states = next_states
             self.total_steps += config.num_workers
@@ -65,7 +65,7 @@ class A2CRecurrentAgent(BaseAgent):
         storage.add(prediction)
         storage.placeholder()
 
-        advantages = tensor(np.zeros((config.num_workers, 1)))#.cuda()
+        advantages = tensor(np.zeros((config.num_workers, 1))).cuda()
         returns = prediction['v'].detach()
         for i in reversed(range(config.rollout_length)):
             returns = storage.r[i] + config.discount * storage.m[i] * returns
