@@ -7,7 +7,9 @@
 from ..network import *
 from ..component import *
 from .BaseAgent import *
+import pdb
 
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class A2CRecurrentAgent(BaseAgent):
     def __init__(self, config):
@@ -18,7 +20,7 @@ class A2CRecurrentAgent(BaseAgent):
             self.network = config.network
         else:
             self.network = config.network_fn()
-        self.network.to(torch.device('cuda'))
+        self.network.to(device)
         self.optimizer = config.optimizer_fn(self.network.parameters())
         self.total_steps = 0
         self.states = self.task.reset()
@@ -52,20 +54,21 @@ class A2CRecurrentAgent(BaseAgent):
             self.record_online_return(info)
             rewards = config.reward_normalizer(rewards)
             storage.add(prediction)
-            storage.add({'r': tensor(rewards).unsqueeze(-1).cuda(),
-                         'm': tensor(1 - terminals).unsqueeze(-1).cuda()})
+            storage.add({'r': tensor(rewards).unsqueeze(-1).to(device),
+                         'm': tensor(1 - terminals).unsqueeze(-1).to(device)})
 
             states = next_states
             self.total_steps += config.num_workers
 
         self.states = states
         prediction, self.recurrent_states = self.network(config.state_normalizer(states))
+        pdb.set_trace()
         # self.smh = [s.detach() for s in self.smh]
 
         storage.add(prediction)
         storage.placeholder()
 
-        advantages = tensor(np.zeros((config.num_workers, 1))).cuda()
+        advantages = tensor(np.zeros((config.num_workers, 1))).to(device)
         returns = prediction['v'].detach()
         for i in reversed(range(config.rollout_length)):
             returns = storage.r[i] + config.discount * storage.m[i] * returns
@@ -76,6 +79,7 @@ class A2CRecurrentAgent(BaseAgent):
                 advantages = advantages * config.gae_tau * config.discount * storage.m[i] + td_error
             storage.adv[i] = advantages.detach()
             storage.ret[i] = returns.detach()
+
 
         log_prob, value, returns, advantages, entropy = storage.cat(['log_pi_a', 'v', 'ret', 'adv', 'ent'])
         policy_loss = -(log_prob * advantages).mean()

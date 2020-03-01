@@ -80,6 +80,7 @@ class BaseAgent:
             raise NotImplementedError
 
     def switch_task(self):
+        import pdb
         config = self.config
         if not config.tasks:
             return
