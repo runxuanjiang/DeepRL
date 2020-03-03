@@ -13,6 +13,9 @@ from .BaseAgent import *
 from torch_geometric.data import Data, Batch
 from torch_geometric.transforms import Distance
 
+import numpy
+import numpy.random
+
 import pdb
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -35,16 +38,26 @@ class PPORecurrentAgent(BaseAgent):
         self.recurrent_states = None
         self.first_recurrent_states = None
         self.states = self.task.reset()
+        self.recurrence = config.recurrence
         self.done = True
 
     def step(self):
         config = self.config
         storage = Storage(config.rollout_length) 
-        #rollout_length should be the same for mini_batch_size. 
-        #This ensures that the recurrent_states match up with the proper corresponding input for the neural net.
+
         states = self.states
         self.first_recurrent_states = self.recurrent_states
         for _ in range(config.rollout_length):
+
+            #because nontype doesn't have .detach()
+            if not self.done:
+                rstates = list(self.recurrent_states)
+                for i, state in enumerate(rstates):
+                    rstates[i] = state.detach()
+                
+                storage.add({'rs': rstates})
+            else:
+                storage.add({'rs': self.recurrent_states})
 
             start = time.time()
             #TODO: Currently, environment still runs with recurrent states after resetting,
@@ -132,88 +145,69 @@ class PPORecurrentAgent(BaseAgent):
 
         log_probs_old, returns, advantages, entropy= storage.cat(['log_pi_a', 'ret', 'adv', 'ent'])
         states = storage.s
+        rc_states = storage.rs
         
         log_probs_old = log_probs_old.detach()
-        #advantages = (advantages - advantages.mean()) / advantages.std()
+        advantages = (advantages - advantages.mean()) / advantages.std()
 
         entropy_loss = entropy.mean()
 
         self.logger.add_scalar('advantages', advantages.mean(), self.total_steps)
 
-        batch_entropy = 0
-        batch_value_loss = 0
-        batch_policy_loss = 0
-        batch_loss = 0
 
         for _ in range(config.optimization_epochs):
-            rc_states = self.first_recurrent_states
-            for i in range(config.rollout_length):
+            indices = numpy.arange(0, self.config.rollout_length, self.recurrence)
+            indices = numpy.random.permutation(indices)
+            batch_size = config.mini_batch_size // self.recurrence
+            starting_batch_indices = [indices[i:i+batch_size] for i in range(0, len(indices), batch_size)]
+            for starting_indices in starting_batch_indices:
+                datapoints = 0
+                batch_entropy = 0
+                batch_value_loss = 0
+                batch_policy_loss = 0
+                batch_loss = 0
+                for index in starting_indices:
+                    recursive_state = rc_states[index]
+                    for i in range(index, index+self.recurrence):
 
-            # sampler = random_sample(np.arange(edge_attr.size(0)), config.mini_batch_size)
-            # for batch_indices in sampler:
-                # batch_indices = tensor(batch_indices).long()
-                # sampled_log_probs_old = log_probs_old[batch_indices]
-                # sampled_returns = returns[batch_indices]
-                # sampled_advantages = advantages[batch_indices]
+                        prediction, recursive_state = self.network(states[i], recursive_state)
 
-                # sampled_edge_attr = edge_attr[batch_indices]
-                # sampled_edge_index = edge_index[batch_indices]
-                # sampled_pos = pos[batch_indices]
-                # sampled_x = x[batch_indices]
-                # sampled_dihedral = dihedral[batch_indices]
+                        entropy = prediction['ent'].mean()
 
-                # sampled_states = []
+                        ratio = (prediction['log_pi_a'] - log_probs_old[i]).exp()
 
-                # for i, _ in enumerate(sampled_edge_attr):
-                #     data = Data(
-                #         edge_attr = sampled_edge_attr[i],
-                #         edge_index = sampled_edge_index[i],
-                #         pos = sampled_pos[i],
-                #         x = sampled_x[i]
-                #     )
-                #     data = Batch.from_data_list([data])
-                #     sampled_states.append((data, sampled_dihedral[i].tolist()))
+                        obj = ratio * advantages[i]
+                        obj_clipped = ratio.clamp(1.0 - self.config.ppo_ratio_clip,
+                                                1.0 + self.config.ppo_ratio_clip) * advantages[i]
 
 
-                
-                prediction, rc_states = self.network(states[i], rc_states)
-
-                entropy = prediction['ent'].mean()
-
-                ratio = (prediction['log_pi_a'] - log_probs_old[i]).exp()
-
-                obj = ratio * advantages[i]
-                obj_clipped = ratio.clamp(1.0 - self.config.ppo_ratio_clip,
-                                          1.0 + self.config.ppo_ratio_clip) * advantages[i]
+                        policy_loss = -torch.min(obj, obj_clipped).mean()# - config.entropy_weight * prediction['ent']
 
 
-                policy_loss = -torch.min(obj, obj_clipped).mean()# - config.entropy_weight * prediction['ent']
+                        value_loss = 0.5 * (returns[i] - prediction['v']).pow(2)
+
+                        loss = policy_loss - (config.entropy_weight * entropy) + config.value_loss_weight * value_loss
+
+                        batch_entropy += entropy.item()
+                        batch_policy_loss += policy_loss.item()
+                        batch_value_loss += value_loss.item()
+                        batch_loss += loss
+                        datapoints += 1
 
 
-                value_loss = 0.5 * (returns[i] - prediction['v']).pow(2)
+                batch_entropy /= datapoints
+                batch_policy_loss /= datapoints
+                batch_value_loss /= datapoints
+                batch_loss /= datapoints
 
-                loss = policy_loss - (config.entropy_weight * entropy) + config.value_loss_weight * value_loss
+                self.logger.add_scalar('entropy_loss', batch_entropy, self.total_steps)
+                self.logger.add_scalar('policy_loss', batch_policy_loss, self.total_steps)
+                self.logger.add_scalar('value_loss', batch_value_loss, self.total_steps)
 
-                batch_entropy += entropy.item()
-                batch_policy_loss += policy_loss.item()
-                batch_value_loss += value_loss.item()
-                batch_loss += loss
+                self.opt.zero_grad()
+                batch_loss.backward()
+                nn.utils.clip_grad_norm_(self.network.parameters(), config.gradient_clip)
+                self.opt.step()
+        
 
-
-
-
-
-            batch_entropy /= self.config.rollout_length
-            batch_policy_loss /= self.config.rollout_length
-            batch_value_loss /= self.config.rollout_length
-            batch_loss /= self.config.rollout_length
-
-            self.logger.add_scalar('entropy_loss', batch_entropy, self.total_steps)
-            self.logger.add_scalar('policy_loss', batch_policy_loss, self.total_steps)
-            self.logger.add_scalar('value_loss', batch_value_loss, self.total_steps)
-
-            self.opt.zero_grad()
-            batch_loss.backward()
-            nn.utils.clip_grad_norm_(self.network.parameters(), config.gradient_clip)
-            self.opt.step()
             
