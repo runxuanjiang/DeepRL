@@ -41,7 +41,7 @@ class A2CRecurrentAgent(BaseAgent):
             end = time.time()
 
             self.logger.add_scalar('forward_pass_time', end-start, self.total_steps)
-            print('forward time', end-start)
+            #print('forward time', end-start)
 
             self.done = False
 
@@ -50,7 +50,7 @@ class A2CRecurrentAgent(BaseAgent):
             end = time.time()
 
             self.logger.add_scalar('env_step_time', end-start, self.total_steps)
-            print('step time', end-start)
+            #print('step time', end-start)
             self.record_online_return(info)
             rewards = config.reward_normalizer(rewards)
             storage.add(prediction)
@@ -62,7 +62,6 @@ class A2CRecurrentAgent(BaseAgent):
 
         self.states = states
         prediction, self.recurrent_states = self.network(config.state_normalizer(states))
-        pdb.set_trace()
         # self.smh = [s.detach() for s in self.smh]
 
         storage.add(prediction)

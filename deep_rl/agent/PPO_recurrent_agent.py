@@ -62,12 +62,13 @@ class PPORecurrentAgent(BaseAgent):
             start = time.time()
             #TODO: Currently, environment still runs with recurrent states after resetting,
             #Need to make sure the environment doesn't run with reccurent states directly after resetting
-            if self.done:
-                print("Environment Just Reset, Running NN Without Recurrent States")
-                prediction, self.recurrent_states = self.network(states)
-            else:
-                print("Running NN With Recurrent States")
-                prediction, self.recurrent_states = self.network(states, self.recurrent_states)
+            with torch.no_grad():
+                if self.done:
+                    print("Environment Just Reset, Running NN Without Recurrent States")
+                    prediction, self.recurrent_states = self.network(states)
+                else:
+                    print("Running NN With Recurrent States")
+                    prediction, self.recurrent_states = self.network(states, self.recurrent_states)
 
             end = time.time()
 
@@ -119,38 +120,30 @@ class PPORecurrentAgent(BaseAgent):
 
         self.states = states
 
-        prediction, self.recurrent_states = self.network(states)
-        #We don't need to add the prediction to storage here
-        # storage.add(prediction)
+        with torch.no_grad():
+            prediction, self.recurrent_states = self.network(states)
 
-        # storage.add({
-        #     'a': prediction['a'].unsqueeze(0),
-        #     'log_pi_a': prediction['log_pi_a'],
-        #     'ent': prediction['ent'],
-        #     'v': prediction['v'],
-        # })
+        storage.add(prediction)
         storage.placeholder()
 
         advantages = tensor(np.zeros((config.num_workers, 1))).to(device)
-        returns = prediction['v'].detach()
+        returns = prediction['v']
         for i in reversed(range(config.rollout_length)):
             returns = storage.r[i] + config.discount * storage.m[i] * returns
             if not config.use_gae:
-                advantages = returns - storage.v[i].detach()
+                advantages = returns - storage.v[i]
             else:
                 td_error = storage.r[i] + config.discount * storage.m[i] * storage.v[i + 1] - storage.v[i]
                 advantages = advantages * config.gae_tau * config.discount * storage.m[i] + td_error
-            storage.adv[i] = advantages.detach()
-            storage.ret[i] = returns.detach()
+            storage.adv[i] = advantages
+            storage.ret[i] = returns
 
         log_probs_old, returns, advantages, entropy= storage.cat(['log_pi_a', 'ret', 'adv', 'ent'])
         states = storage.s
         rc_states = storage.rs
         
-        log_probs_old = log_probs_old.detach()
+        log_probs_old = log_probs_old
         advantages = (advantages - advantages.mean()) / advantages.std()
-
-        entropy_loss = entropy.mean()
 
         self.logger.add_scalar('advantages', advantages.mean(), self.total_steps)
 
