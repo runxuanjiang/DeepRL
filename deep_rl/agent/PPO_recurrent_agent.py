@@ -4,6 +4,9 @@
 # declaration at the top                                              #
 #######################################################################
 
+# TODO:
+# - plot average rewards in matplotlib
+# - look at when entropy loss is recorded
 
 
 from ..network import *
@@ -33,13 +36,13 @@ class PPORecurrentAgent(BaseAgent):
             self.network = config.network_fn()
         self.network.to(device)
 
-        self.opt = config.optimizer_fn(self.network.parameters()) #optimization function
+        self.optimizer = config.optimizer_fn(self.network.parameters()) #optimization function
         self.total_steps = 0
         self.recurrent_states = None
         self.first_recurrent_states = None
         self.states = self.task.reset()
         self.recurrence = config.recurrence
-        self.done = True
+        print("running PPO, tag is " + config.tag)
 
     def step(self):
         config = self.config
@@ -48,101 +51,71 @@ class PPORecurrentAgent(BaseAgent):
         states = self.states
         self.first_recurrent_states = self.recurrent_states
         for _ in range(config.rollout_length):
-
-            #because nontype doesn't have .detach()
-            if not self.done:
+            #put states and recurrent states into storage
+            if self.done:
+                storage.add({'rs': self.recurrent_states})
+            else:
                 rstates = list(self.recurrent_states)
                 for i, state in enumerate(rstates):
                     rstates[i] = state.detach()
-                
                 storage.add({'rs': rstates})
-            else:
-                storage.add({'rs': self.recurrent_states})
 
+            #run the neural net once to get prediction
             start = time.time()
-            #TODO: Currently, environment still runs with recurrent states after resetting,
-            #Need to make sure the environment doesn't run with reccurent states directly after resetting
-            with torch.no_grad():
-                if self.done:
-                    print("Environment Just Reset, Running NN Without Recurrent States")
-                    prediction, self.recurrent_states = self.network(states)
-                else:
-                    print("Running NN With Recurrent States")
-                    prediction, self.recurrent_states = self.network(states, self.recurrent_states)
-
+            if self.done:
+                prediction, self.recurrent_states = self.network(states)
+            else:
+                prediction, self.recurrent_states = self.network(states, self.recurrent_states)
             end = time.time()
-
             self.logger.add_scalar('forward_pass_time', end-start, self.total_steps)
 
             self.done = False
 
+            #step the environment with the action determined by the prediction
             start = time.time()
-            #One environment interaction
             next_states, rewards, terminals, info = self.task.step(to_np(prediction['a']))
             end = time.time()
             self.logger.add_scalar('env_step_time', end-start, self.total_steps)
 
-            #self.done = terminals[0]
-
             self.record_online_return(info)
             rewards = config.reward_normalizer(rewards)
-            storage.add(prediction)
-            #Use this format if the "a" or action parameter is used.
-            
-            # storage.add({
-            #     'a': prediction['a'].unsqueeze(0),
-            #     'log_pi_a': prediction['log_pi_a'],
-            #     'ent': prediction['ent'],
-            #     'v': prediction['v'],
-            # })
-            
 
-            # dihedrals = torch.tensor(states[0][1])
-            # dihedrals = dihedrals.unsqueeze(0)
-            # states = states[0][0]
-            # states = states.to_data_list()
-            # states = states[0]
-            # storage.add({'edge_attr': states.edge_attr.unsqueeze(0).to(device),
-            #              'edge_index': states.edge_index.unsqueeze(0).to(device),
-            #              'pos': states.pos.unsqueeze(0).to(device),
-            #              'x': states.x.unsqueeze(0).to(device),
-            #              'dihedral': dihedrals})
+            #add everything to storage
+            storage.add(prediction)
             storage.add({'s': states})
             storage.add({'r': tensor(rewards).unsqueeze(-1).to(device),
                          'm': tensor(1 - terminals).unsqueeze(-1).to(device)})
-            """if (self.done):
-                states = self.task.reset()
-            else:
-                states = next_states"""
             states = next_states
 
             self.total_steps += config.num_workers
 
         self.states = states
 
-        with torch.no_grad():
-            prediction, self.recurrent_states = self.network(states)
+        prediction, self.recurrent_states = self.network(states)
 
+        #TODO:This could possibly be an issue, would this prediction ever be used?
         storage.add(prediction)
         storage.placeholder()
 
         advantages = tensor(np.zeros((config.num_workers, 1))).to(device)
-        returns = prediction['v']
+        returns = prediction['v'].detach()
         for i in reversed(range(config.rollout_length)):
             returns = storage.r[i] + config.discount * storage.m[i] * returns
             if not config.use_gae:
-                advantages = returns - storage.v[i]
+                advantages = returns - storage.v[i].detach()
             else:
                 td_error = storage.r[i] + config.discount * storage.m[i] * storage.v[i + 1] - storage.v[i]
                 advantages = advantages * config.gae_tau * config.discount * storage.m[i] + td_error
-            storage.adv[i] = advantages
-            storage.ret[i] = returns
+            storage.adv[i] = advantages.detach()
+            storage.ret[i] = returns.detach()
 
-        log_probs_old, returns, advantages, entropy= storage.cat(['log_pi_a', 'ret', 'adv', 'ent'])
+        log_probs_old, value, returns, advantages= storage.cat(['log_pi_a', 'v', 'ret', 'adv'])
+        log_probs_old = log_probs_old.detach()
+        value = value.detach()
         states = storage.s
         rc_states = storage.rs
+
         
-        log_probs_old = log_probs_old
         advantages = (advantages - advantages.mean()) / advantages.std()
 
         self.logger.add_scalar('advantages', advantages.mean(), self.total_steps)
@@ -176,31 +149,35 @@ class PPORecurrentAgent(BaseAgent):
 
                         policy_loss = -torch.min(obj, obj_clipped).mean()# - config.entropy_weight * prediction['ent']
 
+                        value_clipped = value[i] + torch.clamp(prediction['v'] - value[i], -self.config.ppo_ratio_clip, self.config.ppo_ratio_clip)
+                        surr1 = (prediction['v'] - returns[i]).pow(2)
+                        surr2 = (value_clipped - returns[i]).pow(2)
 
-                        value_loss = 0.5 * (returns[i] - prediction['v']).pow(2)
+                        value_loss = torch.max(surr1, surr2).mean()
+
+
 
                         loss = policy_loss - (config.entropy_weight * entropy) + config.value_loss_weight * value_loss
 
                         batch_entropy += entropy.item()
                         batch_policy_loss += policy_loss.item()
                         batch_value_loss += value_loss.item()
-                        batch_loss += loss
+                        batch_loss += loss;
                         datapoints += 1
 
 
                 batch_entropy /= datapoints
                 batch_policy_loss /= datapoints
                 batch_value_loss /= datapoints
-                batch_loss /= datapoints
 
                 self.logger.add_scalar('entropy_loss', batch_entropy, self.total_steps)
                 self.logger.add_scalar('policy_loss', batch_policy_loss, self.total_steps)
                 self.logger.add_scalar('value_loss', batch_value_loss, self.total_steps)
 
-                self.opt.zero_grad()
+                self.optimizer.zero_grad()
                 batch_loss.backward()
                 nn.utils.clip_grad_norm_(self.network.parameters(), config.gradient_clip)
-                self.opt.step()
+                self.optimizer.step()
         
 
             

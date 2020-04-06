@@ -9,6 +9,8 @@ from ..component import *
 from .BaseAgent import *
 import time
 
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 class A2CAgent(BaseAgent):
     def __init__(self, config):
         BaseAgent.__init__(self, config)
@@ -18,7 +20,7 @@ class A2CAgent(BaseAgent):
             self.network = config.network
         else:
             self.network = config.network_fn()
-        self.network.to(torch.device('cuda'))
+        self.network.to(device)
         self.optimizer = config.optimizer_fn(self.network.parameters())
         self.total_steps = 0
         self.states = self.task.reset()
@@ -42,8 +44,8 @@ class A2CAgent(BaseAgent):
             self.record_online_return(info)
             rewards = config.reward_normalizer(rewards)
             storage.add(prediction)
-            storage.add({'r': tensor(rewards).unsqueeze(-1).cuda(),
-                         'm': tensor(1 - terminals).unsqueeze(-1).cuda()})
+            storage.add({'r': tensor(rewards).unsqueeze(-1).to(device),
+                         'm': tensor(1 - terminals).unsqueeze(-1).to(device)})
 
             states = next_states
             self.total_steps += config.num_workers
@@ -54,15 +56,15 @@ class A2CAgent(BaseAgent):
         storage.placeholder()
 
         start = time.time()
-        advantages = tensor(np.zeros((config.num_workers, 1))).cuda()
-        returns = prediction['v'].detach().cuda()
+        advantages = tensor(np.zeros((config.num_workers, 1))).to(device)
+        returns = prediction['v'].detach().to(device)
         for i in reversed(range(config.rollout_length)):
             returns = storage.r[i] + config.discount * storage.m[i] * returns
             if not config.use_gae:
                 print(advantages.device)
                 print(returns.device)
                 print(storage.v[i].detach().device)
-                advantages = returns - storage.v[i].detach().cuda()
+                advantages = returns - storage.v[i].detach().to(device)
             else:
                 td_error = storage.r[i] + config.discount * storage.m[i] * storage.v[i + 1] - storage.v[i]
                 advantages = advantages * config.gae_tau * config.discount * storage.m[i] + td_error

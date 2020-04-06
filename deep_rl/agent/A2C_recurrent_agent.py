@@ -27,6 +27,7 @@ class A2CRecurrentAgent(BaseAgent):
         self.recurrent_states = None
         self.done = True
         self.smh = None
+        print("running A2C, tag is " + config.tag)
 
     def step(self):
         config = self.config

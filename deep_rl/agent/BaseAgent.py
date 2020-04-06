@@ -11,12 +11,16 @@ import torch.multiprocessing as mp
 from collections import deque
 from skimage.io import imsave
 
+import matplotlib.pyplot as plt
+
 
 class BaseAgent:
     def __init__(self, config):
         self.config = config
         self.logger = get_logger(tag=config.tag, log_level=config.log_level)
         self.task_ind = 0
+        self.rewards = np.asarray([])
+        self.meanrewards = np.asarray([])
 
     def close(self):
         close_obj(self.task)
@@ -63,6 +67,14 @@ class BaseAgent:
         if isinstance(info, dict):
             ret = info['episodic_return']
             if ret is not None:
+                self.rewards = np.append(self.rewards, ret)
+                if len(self.rewards) >= 100:
+                    self.meanrewards = np.append(self.meanrewards, self.rewards[-100:].mean())
+                else:
+                    self.meanrewards = np.append(self.meanrewards, self.rewards.mean())
+                plt.plot(self.rewards)
+                plt.plot(self.meanrewards)
+                plt.savefig(self.config.tag + '.png')
                 self.logger.add_scalar('episodic_return_train', ret, self.total_steps + offset)
                 self.logger.info('steps %d, episodic_return_train %s' % (self.total_steps + offset, ret))
 
