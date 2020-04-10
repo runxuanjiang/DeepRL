@@ -84,7 +84,10 @@ class PPORecurrentAgent(BaseAgent):
             rewards = config.reward_normalizer(rewards)
 
             #add everything to storage
-            storage.add(prediction)
+            storage.add({
+                'log_pi_a': prediction['log_pi_a'].unsqueeze(0),
+                'ent': prediction['ent'].unsqueeze(0),
+                'v': prediction['v']})
             storage.add({'s': states})
             storage.add({'r': tensor(rewards).unsqueeze(-1).to(device),
                          'm': tensor(1 - terminals).unsqueeze(-1).to(device)})
@@ -96,8 +99,10 @@ class PPORecurrentAgent(BaseAgent):
 
         prediction, self.recurrent_states = self.network(states)
 
-        #TODO:This could possibly be an issue, would this prediction ever be used?
-        storage.add(prediction)
+        storage.add({
+            'log_pi_a': prediction['log_pi_a'].unsqueeze(0),
+            'ent': prediction['ent'].unsqueeze(0),
+            'v': prediction['v']})
         storage.placeholder()
 
         advantages = tensor(np.zeros((config.num_workers, 1))).to(device)
@@ -109,8 +114,8 @@ class PPORecurrentAgent(BaseAgent):
             else:
                 td_error = storage.r[i] + config.discount * storage.m[i] * storage.v[i + 1] - storage.v[i]
                 advantages = advantages * config.gae_tau * config.discount * storage.m[i] + td_error
-            storage.adv[i] = advantages.detach()
-            storage.ret[i] = returns.detach()
+            storage.adv[i] = advantages.unsqueeze(0).detach()
+            storage.ret[i] = returns.unsqueeze(0).detach()
 
         log_probs_old, values, returns, advantages= storage.cat(['log_pi_a', 'v', 'ret', 'adv'])
         log_probs_old = log_probs_old.detach()
@@ -139,13 +144,13 @@ class PPORecurrentAgent(BaseAgent):
 
                 prediction, _ = self.network(sampled_states, sampled_rc_states)
 
-                ratio = (prediction['log_pi_a'] - sampled_log_probs_old).exp()
-                obj = ratio * sampled_advantages
+                ratio = (prediction['log_pi_a'] - sampled_log_probs_old.view(-1, 1)).exp()
+                obj = ratio * sampled_advantages.view(-1, 1)
                 obj_clipped = ratio.clamp(1.0 - self.config.ppo_ratio_clip,
-                                          1.0 + self.config.ppo_ratio_clip) * sampled_advantages
+                                          1.0 + self.config.ppo_ratio_clip) * sampled_advantages.view(-1, 1)
                 policy_loss = -torch.min(obj, obj_clipped).mean() - config.entropy_weight * prediction['ent'].mean()
 
-                value_loss = 0.5 * (sampled_returns - prediction['v']).pow(2).mean()
+                value_loss = 0.5 * (sampled_returns.view(-1, 1) - prediction['v']).pow(2).mean()
 
                 self.optimizer.zero_grad()
                 (policy_loss + value_loss).backward()
