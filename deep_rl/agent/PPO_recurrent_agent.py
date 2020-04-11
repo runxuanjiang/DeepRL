@@ -112,7 +112,7 @@ class PPORecurrentAgent(BaseAgent):
             storage.adv[i] = advantages.detach()
             storage.ret[i] = returns.detach()
 
-        log_probs_old, returns, advantages= storage.cat(['log_pi_a', 'ret', 'adv'])
+        actions, log_probs_old, returns, advantages= storage.cat(['a', 'log_pi_a', 'ret', 'adv'])
         log_probs_old = log_probs_old.detach()
 
         states, h0, c0 = storage.cat(['s', 'h0', 'c0'])
@@ -131,6 +131,7 @@ class PPORecurrentAgent(BaseAgent):
             for batch_indices in sampler:
                 batch_indices = tensor(batch_indices).long()
 
+                sampled_actions = actions[batch_indices]
                 sampled_log_probs_old = log_probs_old[batch_indices]
                 sampled_returns = returns[batch_indices]
                 sampled_advantages = advantages[batch_indices]
@@ -138,7 +139,7 @@ class PPORecurrentAgent(BaseAgent):
                 sampled_h0 = h0[batch_indices]
                 sampled_c0 = c0[batch_indices]
 
-                prediction, _ = self.network(sampled_states, (sampled_h0, sampled_c0))
+                prediction, _ = self.network(sampled_states, (sampled_h0, sampled_c0), sampled_actions)
 
                 ratio = (prediction['log_pi_a'] - sampled_log_probs_old).exp()
                 obj = ratio * sampled_advantages
