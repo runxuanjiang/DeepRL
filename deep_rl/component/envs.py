@@ -136,7 +136,7 @@ class DummyVecEnv:
     def step_wait(self):
         data = []
         for i, x in enumerate(self.envs):
-            obs, rew, done, info = self.envs[i].step(self.actions)
+            obs, rew, done, info = self.envs[i].step(self.actions[i])
             if done:
                 obs = self.envs[i].reset()
             data.append([obs, rew, done, info])

@@ -40,8 +40,8 @@ class PPORecurrentAgent(BaseAgent):
         self.optimizer = config.optimizer_fn(self.network.parameters()) #optimization function
         self.total_steps = 0
         self.states = self.task.reset()
-        self.h0 = torch.zeros(self.config.num_workers, self.hidden_size) #lstm hidden states
-        self.c0 = torch.zeros(self.config.num_workers, self.hidden_size) #lstm cell states
+        self.h0 = torch.zeros(self.config.num_workers, self.hidden_size).to(device) #lstm hidden states
+        self.c0 = torch.zeros(self.config.num_workers, self.hidden_size).to(device) #lstm cell states
         print("running PPO, tag is " + config.tag)
 
     def step(self):
@@ -57,12 +57,14 @@ class PPORecurrentAgent(BaseAgent):
 
             #add recurrent states (lstm hidden and lstm cell states) to storage
             storage.add({
-                'h0' : self.h0,
-                'c0' : self.c0
+                'h0' : self.h0.to(device),
+                'c0' : self.c0.to(device)
             })
 
             #run the neural net once to get prediction
             prediction, (self.h0, self.c0) = self.network(states, (self.h0, self.c0))
+            self.h0 = self.h0.to(device)
+            self.c0 = self.c0.to(device)
 
             #step the environment with the action determined by the prediction
             next_states, rewards, terminals, info = self.task.step(to_np(prediction['a']))
@@ -72,7 +74,7 @@ class PPORecurrentAgent(BaseAgent):
             #add everything to storage
             storage.add(prediction)
             storage.add({
-                's' : tensor(states),
+                's' : tensor(states).to(device),
                 'r': tensor(rewards).unsqueeze(-1).to(device),
                 'm': tensor(1 - terminals).unsqueeze(-1).to(device)
                 })
