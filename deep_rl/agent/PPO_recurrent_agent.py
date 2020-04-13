@@ -42,6 +42,7 @@ class PPORecurrentAgent(BaseAgent):
         self.states = self.task.reset()
         self.h0 = torch.zeros(self.config.num_workers, self.hidden_size).to(device) #lstm hidden states
         self.c0 = torch.zeros(self.config.num_workers, self.hidden_size).to(device) #lstm cell states
+        self.recurrence = self.config.recurrence
         print("running PPO, tag is " + config.tag)
 
     def step(self):
@@ -116,6 +117,7 @@ class PPORecurrentAgent(BaseAgent):
         storage.log_pi_a = storage.log_pi_a[:self.config.rollout_length]
         storage.v = storage.v[:self.config.rollout_length]
 
+
         actions = torch.stack(storage.a, 1).reshape(-1)
         log_probs_old = torch.cat(storage.log_pi_a, 1).reshape(-1)
         values = torch.cat(storage.v, 1).reshape(-1)
@@ -123,9 +125,11 @@ class PPORecurrentAgent(BaseAgent):
         advantages = torch.cat(storage.adv, 1).reshape(-1)
 
         log_probs_old = log_probs_old.detach()
+        values = values.detach()
         states = torch.stack(storage.s, 1).view(-1, 4)
         h0 = torch.stack(storage.h0, 1).view(-1, self.hidden_size)
         c0 = torch.stack(storage.c0, 1).view(-1, self.hidden_size)
+
         
         advantages = (advantages - advantages.mean()) / advantages.std()
 
@@ -151,36 +155,29 @@ class PPORecurrentAgent(BaseAgent):
                 sampled_c0 = c0[starting_indices]
 
                 for i in range(self.recurrence):
-                    sampled_actions = actions[starting_indices]
-                    sampled_log_probs_old = log_probs_old[starting_indices]
-                    sampled_values = values[starting_indices]
-                    sampled_returns = returns[starting_indices]
-                    sampled_advantages = advantages[starting_indices]
-                    sampled_states = states[starting_indices]
+                    sampled_actions = actions[starting_indices + i]
+                    sampled_log_probs_old = log_probs_old[starting_indices + i]
+                    sampled_values = values[starting_indices + i]
+                    sampled_returns = returns[starting_indices + i]
+                    sampled_advantages = advantages[starting_indices + i]
+                    sampled_states = states[starting_indices + i]
 
                     prediction, (sampled_h0, sampled_c0) = self.network(sampled_states, (sampled_h0, sampled_c0), sampled_actions)
-                    pdb.set_trace()
 
                     entropy = prediction['ent'].mean()
+                    
+                    prediction['log_pi_a'] = prediction['log_pi_a'].reshape(-1)
+                    prediction['v'] = prediction['v'].reshape(-1)
 
                     ratio = (prediction['log_pi_a'] - sampled_log_probs_old).exp()
-
                     obj = ratio * sampled_advantages
                     obj_clipped = ratio.clamp(1.0 - self.config.ppo_ratio_clip,
                                             1.0 + self.config.ppo_ratio_clip) * sampled_advantages
+                    policy_loss = -torch.min(obj, obj_clipped).mean() - config.entropy_weight * prediction['ent'].mean()
 
+                    value_loss = 0.5 * (sampled_returns - prediction['v']).pow(2).mean()
 
-                    policy_loss = -torch.min(obj, obj_clipped).mean()
-
-                    value_clipped = sampled_values + torch.clamp(prediction['v'] - sampled_values, -self.config.ppo_ratio_clip, self.config.ppo_ratio_clip)
-                    surr1 = (prediction['v'] - sampled_returns).pow(2)
-                    surr2 = (value_clipped - sampled_returns).pow(2)
-
-                    value_loss = torch.max(surr1, surr2).mean()
-
-
-
-                    loss = policy_loss - (config.entropy_weight * entropy) + config.value_loss_weight * value_loss
+                    loss = policy_loss + value_loss
 
                     batch_entropy += entropy.item()
                     batch_policy_loss += policy_loss.item()
