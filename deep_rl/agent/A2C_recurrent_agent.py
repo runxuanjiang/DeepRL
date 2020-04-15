@@ -36,10 +36,13 @@ class A2CRecurrentAgent(BaseAgent):
         for _ in range(config.rollout_length):
             start = time.time()
             if self.done:
+                print('done1')
                 prediction, self.recurrent_states = self.network(config.state_normalizer(states))
             else:
                 prediction, self.recurrent_states = self.network(config.state_normalizer(states), self.recurrent_states)
             end = time.time()
+
+            print('reserved bytes', torch.cuda.memory_reserved() / (1024 * 1024), 'MB')
 
             self.logger.add_scalar('forward_pass_time', end-start, self.total_steps)
             #print('forward time', end-start)
@@ -104,3 +107,5 @@ class A2CRecurrentAgent(BaseAgent):
         self.logger.add_scalar('backwards_pass_time', end-start, self.total_steps)
         # [rs.detach_() for rs in self.recurrent_states]
         # self.recurrent_states = [rs.detach() for rs in self.recurrent_states]
+
+

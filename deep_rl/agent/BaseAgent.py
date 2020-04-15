@@ -66,12 +66,12 @@ class BaseAgent:
                 self.logger.add_scalar('episodic_return_train', ret, self.total_steps + offset)
                 self.logger.info('steps %d, episodic_return_train %s' % (self.total_steps + offset, ret))
 
-            # for key in info:
-            #     if key is 'episodic_return':
-            #         continue
-            #     else:
-            #         if key and info[key]:
-            #             self.logger.add_scalar(key, info[key], self.total_steps + offset)
+            for key in info:
+                if key == 'episodic_return' or key == 'terminal_observation':
+                    continue
+                else:
+                    if key and info[key]:
+                        self.logger.add_scalar(key, info[key], self.total_steps + offset)
 
         elif isinstance(info, tuple):
             for i, info_ in enumerate(info):

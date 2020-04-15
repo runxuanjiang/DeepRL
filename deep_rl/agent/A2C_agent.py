@@ -9,7 +9,9 @@ from ..component import *
 from .BaseAgent import *
 import time
 
+
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 
 class A2CAgent(BaseAgent):
     def __init__(self, config):
