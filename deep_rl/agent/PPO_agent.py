@@ -8,6 +8,8 @@ from ..network import *
 from ..component import *
 from .BaseAgent import *
 
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 
 class PPOAgent(BaseAgent):
     def __init__(self, config):
@@ -18,7 +20,7 @@ class PPOAgent(BaseAgent):
             self.network = config.network
         else:
             self.network = config.network_fn()
-        self.network.to(torch.device('cuda'))
+        self.network.to(device)
         self.opt = config.optimizer_fn(self.network.parameters())
         self.total_steps = 0
         self.states = self.task.reset()

@@ -41,6 +41,8 @@ class A2CRecurrentAgent(BaseAgent):
             self.c0 = self.c0.to(device)
             end = time.time()
 
+            print('reserved bytes', torch.cuda.memory_reserved() / (1024 * 1024), 'MB')
+
             self.logger.add_scalar('forward_pass_time', end-start, self.total_steps)
 
             start = time.time()

@@ -23,7 +23,7 @@ def tensor(x):
     if isinstance(x, torch.Tensor):
         return x
     x = np.asarray(x, dtype=np.float)
-    #TODO: Change device back to cuda
+
     x = torch.tensor(x, device=device, dtype=torch.float32)
     return x
 
