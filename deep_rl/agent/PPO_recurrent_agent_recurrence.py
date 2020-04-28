@@ -24,7 +24,7 @@ import pdb
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-class PPORecurrentAgent(BaseAgent):
+class PPORecurrentAgentRecurrence(BaseAgent):
     def __init__(self, config):
         BaseAgent.__init__(self, config)
         self.config = config #config file, contains hyperparameters and other info
