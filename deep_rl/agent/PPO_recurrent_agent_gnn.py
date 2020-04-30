@@ -56,53 +56,50 @@ class PPORecurrentAgentGnn(BaseAgent):
         ##############################################################################################
         #Sampling Loop
         ##############################################################################################
-        for _ in range(config.rollout_length):
+        with torch.no_grad():
+            for _ in range(config.rollout_length):
 
-            #add recurrent states (lstm hidden and lstm cell states) to storage
-            storage.add({
-                'hp' : self.hp.to(device),
-                'cp' : self.cp.to(device),
-                'hv' : self.hv.to(device),
-                'cv' : self.cv.to(device)
-            })
-
-            #run the neural net once to get prediction
-            prediction, (self.hp, self.cp, self.hv, self.cv) = self.network(states, (self.hp, self.cp, self.hv, self.cv))
-            self.hp = self.hp.to(device)
-            self.cp= self.cp.to(device)
-            self.hv = self.hv.to(device)
-            self.cv = self.cv.to(device)
-
-            #step the environment with the action determined by the prediction
-            next_states, rewards, terminals, info = self.task.step(to_np(prediction['a']))
-            self.record_online_return(info)
-            rewards = config.reward_normalizer(rewards)
-
-            #add everything to storage
-            storage.add(prediction)
-            storage.add({
-                'r': tensor(rewards).unsqueeze(-1).to(device),
-                'm': tensor(1 - terminals).unsqueeze(-1).to(device)
+                #add recurrent states (lstm hidden and lstm cell states) to storage
+                storage.add({
+                    'hp' : self.hp,
+                    'cp' : self.cp,
+                    'hv' : self.hv,
+                    'cv' : self.cv
                 })
-            states_mem.extend(states)
-            states = next_states
-            
-            #zero out lstm recurrent state if any of the environments finish
-            for i, done in enumerate(terminals):
-                if done:
-                    self.hp[0][i] = torch.zeros(self.hidden_size)
-                    self.cp[0][i] = torch.zeros(self.hidden_size)
-                    self.hv[0][i] = torch.zeros(self.hidden_size)
-                    self.cv[0][i] = torch.zeros(self.hidden_size)
 
-            self.total_steps += config.num_workers
+                #run the neural net once to get prediction
+                prediction, (self.hp, self.cp, self.hv, self.cv) = self.network(states, (self.hp, self.cp, self.hv, self.cv))
 
-        self.states = states
+                #step the environment with the action determined by the prediction
+                next_states, rewards, terminals, info = self.task.step(to_np(prediction['a']))
+                self.record_online_return(info)
+                rewards = config.reward_normalizer(rewards)
 
-        prediction, _ = self.network(states, (self.hp, self.cp, self.hv, self.cv))
+                #add everything to storage
+                storage.add(prediction)
+                storage.add({
+                    'r': tensor(rewards).unsqueeze(-1).to(device),
+                    'm': tensor(1 - terminals).unsqueeze(-1).to(device)
+                    })
+                states_mem.extend(states)
+                states = next_states
+                
+                #zero out lstm recurrent state if any of the environments finish
+                for i, done in enumerate(terminals):
+                    if done:
+                        self.hp[0][i] = torch.zeros(self.hidden_size).to(device)
+                        self.cp[0][i] = torch.zeros(self.hidden_size).to(device)
+                        self.hv[0][i] = torch.zeros(self.hidden_size).to(device)
+                        self.cv[0][i] = torch.zeros(self.hidden_size).to(device)
 
-        storage.add(prediction)
-        storage.placeholder()
+                self.total_steps += config.num_workers
+
+            self.states = states
+
+            prediction, _ = self.network(states, (self.hp, self.cp, self.hv, self.cv))
+
+            storage.add(prediction)
+            storage.placeholder()
 
 
         #############################################################################################
@@ -136,7 +133,7 @@ class PPORecurrentAgentGnn(BaseAgent):
         #Training Loop
         ############################################################################################
         for _ in range(config.optimization_epochs):
-            sampler = random_sample(np.arange(len(states)), config.mini_batch_size)
+            sampler = random_sample(np.arange(len(actions)), config.mini_batch_size)
             for batch_indices in sampler:
                 batch_indices = tensor(batch_indices).long()
 
@@ -145,12 +142,12 @@ class PPORecurrentAgentGnn(BaseAgent):
                 sampled_returns = returns[batch_indices]
                 sampled_advantages = advantages[batch_indices]
                 sampled_states = [states_mem[i] for i in batch_indices]
-                sampled_hp = hp[batch_indices]
-                sampled_cp = cp[batch_indices]
-                sampled_hv = hv[batch_indices]
-                sampled_cv = cv[batch_indices]
+                sampled_hp = hp[batch_indices].view(1, -1, self.hidden_size)
+                sampled_cp = cp[batch_indices].view(1, -1, self.hidden_size)
+                sampled_hv = hv[batch_indices].view(1, -1, self.hidden_size)
+                sampled_cv = cv[batch_indices].view(1, -1, self.hidden_size)
 
-                prediction, _ = self.network(sampled_states, (sampled_h0, sampled_c0), sampled_actions)
+                prediction, _ = self.network(sampled_states, (sampled_hp, sampled_cp, sampled_hv, sampled_cv), sampled_actions)
 
                 ratio = (prediction['log_pi_a'] - sampled_log_probs_old).exp()
                 obj = ratio * sampled_advantages
