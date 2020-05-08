@@ -4,10 +4,6 @@
 # declaration at the top                                              #
 #######################################################################
 
-# TODO:
-# - plot average rewards in matplotlib
-# - look at when entropy loss is recorded
-
 
 from ..network import *
 from ..component import *
@@ -39,6 +35,7 @@ class PPORecurrentAgentGnnRecurrence(BaseAgent):
 
         self.optimizer = config.optimizer_fn(self.network.parameters()) #optimization function
         self.total_steps = 0
+        self.batch_num = 0
 
         self.states = self.task.reset()
 
@@ -48,6 +45,9 @@ class PPORecurrentAgentGnnRecurrence(BaseAgent):
         self.cv = torch.zeros(1, self.config.num_workers, self.hidden_size).to(device) #lstm cell states
         self.recurrence = self.config.recurrence
         print("running PPO, tag is " + config.tag)
+
+        assert config.rollout_length % self.recurrence == 0
+        assert config.mini_batch_size % self.recurrence == 0
 
     def step(self):
         config = self.config
@@ -77,6 +77,8 @@ class PPORecurrentAgentGnnRecurrence(BaseAgent):
                 #run the neural net once to get prediction
                 prediction, (self.hp, self.cp, self.hv, self.cv) = self.network(states, (self.hp, self.cp, self.hv, self.cv))
                 #step the environment with the action determined by the prediction
+                # if (self.total_steps >= 800):
+                #     pdb.set_trace()
                 next_states, rewards, terminals, info = self.task.step(to_np(prediction['a']))
                 self.record_online_return(info)
                 rewards = config.reward_normalizer(rewards)
@@ -153,6 +155,7 @@ class PPORecurrentAgentGnnRecurrence(BaseAgent):
         hv = torch.stack(storage.hv, 2).view(-1, self.hidden_size)
         cv = torch.stack(storage.cv, 2).view(-1, self.hidden_size)
 
+
         advantages = (advantages - advantages.mean()) / advantages.std()
 
         self.logger.add_scalar('advantages', advantages.mean(), self.total_steps)
@@ -161,12 +164,19 @@ class PPORecurrentAgentGnnRecurrence(BaseAgent):
         for block in states_mem:
             states.extend(block)
 
+
         ############################################################################################
         #Training Loop
         ############################################################################################
         for _ in range(config.optimization_epochs):
             indices = numpy.arange(0, self.config.rollout_length * self.config.num_workers, self.recurrence);
             indices = numpy.random.permutation(indices);
+
+            if self.batch_num % 2 == 1:
+                indices = indices[(indices + self.recurrence) % config.rollout_length != 0]
+                indices += self.recurrence // 2
+            self.batch_num += 1
+
             num_indices = config.mini_batch_size // self.recurrence
             starting_batch_indices = [indices[i:i+num_indices] for i in range(0, len(indices), num_indices)]
             for starting_indices in starting_batch_indices:
@@ -215,6 +225,13 @@ class PPORecurrentAgentGnnRecurrence(BaseAgent):
                     batch_policy_loss += policy_loss.item()
                     batch_value_loss += value_loss.item()
                     batch_loss += loss;
+
+                    if i < self.recurrence - 1:
+                        for sample_id, batch_id in enumerate(starting_indices):
+                            hp[batch_id + i + 1] = sampled_hp[0][sample_id].detach()
+                            cp[batch_id + i + 1] = sampled_cp[0][sample_id].detach()
+                            hv[batch_id + i + 1] = sampled_hv[0][sample_id].detach()
+                            cv[batch_id + i + 1] = sampled_cv[0][sample_id].detach()
 
 
             batch_entropy /= self.recurrence

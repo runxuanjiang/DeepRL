@@ -61,10 +61,10 @@ class PPORecurrentAgentGnn(BaseAgent):
 
                 #add recurrent states (lstm hidden and lstm cell states) to storage
                 storage.add({
-                    'hp' : self.hp,
-                    'cp' : self.cp,
-                    'hv' : self.hv,
-                    'cv' : self.cv
+                    'hp' : self.hp.squeeze(0),
+                    'cp' : self.cp.squeeze(0),
+                    'hv' : self.hv.squeeze(0),
+                    'cv' : self.cv.squeeze(0)
                 })
 
                 #run the neural net once to get prediction
@@ -76,7 +76,12 @@ class PPORecurrentAgentGnn(BaseAgent):
                 rewards = config.reward_normalizer(rewards)
 
                 #add everything to storage
-                storage.add(prediction)
+                storage.add({
+                    'a': prediction['a'],
+                    'log_pi_a': prediction['log_pi_a'].squeeze(0),
+                    'ent': prediction['ent'].squeeze(0),
+                    'v': prediction['v'].squeeze(0),
+                })
                 storage.add({
                     'r': tensor(rewards).unsqueeze(-1).to(device),
                     'm': tensor(1 - terminals).unsqueeze(-1).to(device)
@@ -98,7 +103,12 @@ class PPORecurrentAgentGnn(BaseAgent):
 
             prediction, _ = self.network(states, (self.hp, self.cp, self.hv, self.cv))
 
-            storage.add(prediction)
+            storage.add({
+                'a': prediction['a'],
+                'log_pi_a': prediction['log_pi_a'].squeeze(0),
+                'ent': prediction['ent'].squeeze(0),
+                'v': prediction['v'].squeeze(0),
+            })
             storage.placeholder()
 
 
@@ -107,7 +117,7 @@ class PPORecurrentAgentGnn(BaseAgent):
         #############################################################################################
 
         advantages = tensor(np.zeros((config.num_workers, 1))).to(device)
-        returns = prediction['v'].detach()
+        returns = prediction['v'].squeeze(0).detach()
         for i in reversed(range(config.rollout_length)):
             returns = storage.r[i] + config.discount * storage.m[i] * returns
             if not config.use_gae:
@@ -142,10 +152,10 @@ class PPORecurrentAgentGnn(BaseAgent):
                 sampled_returns = returns[batch_indices]
                 sampled_advantages = advantages[batch_indices]
                 sampled_states = [states_mem[i] for i in batch_indices]
-                sampled_hp = hp[batch_indices].view(1, -1, self.hidden_size)
-                sampled_cp = cp[batch_indices].view(1, -1, self.hidden_size)
-                sampled_hv = hv[batch_indices].view(1, -1, self.hidden_size)
-                sampled_cv = cv[batch_indices].view(1, -1, self.hidden_size)
+                sampled_hp = hp[batch_indices].unsqueeze(0)
+                sampled_cp = cp[batch_indices].unsqueeze(0)
+                sampled_hv = hv[batch_indices].unsqueeze(0)
+                sampled_cv = cv[batch_indices].unsqueeze(0)
 
                 prediction, _ = self.network(sampled_states, (sampled_hp, sampled_cp, sampled_hv, sampled_cv), sampled_actions)
 
