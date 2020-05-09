@@ -11,7 +11,7 @@ import pdb
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-class A2CRecurrentAgent(BaseAgent):
+class A2CRecurrentAgentFixed(BaseAgent):
     def __init__(self, config):
         BaseAgent.__init__(self, config)
         self.config = config
@@ -24,9 +24,10 @@ class A2CRecurrentAgent(BaseAgent):
         self.optimizer = config.optimizer_fn(self.network.parameters())
         self.total_steps = 0
         self.states = self.task.reset()
-        self.recurrent_states = None
-        self.done = True
         self.smh = None
+        self.hidden_size = config.hidden_size
+        self.h0 = torch.zeros(self.config.num_workers, self.hidden_size).to(device) #lstm hidden states
+        self.c0 = torch.zeros(self.config.num_workers, self.hidden_size).to(device) #lstm cell states
         print("running A2C, tag is " + config.tag)
 
     def step(self):
@@ -35,16 +36,12 @@ class A2CRecurrentAgent(BaseAgent):
         states = self.states
         for _ in range(config.rollout_length):
             start = time.time()
-            if self.done:
-                prediction, self.recurrent_states = self.network(config.state_normalizer(states))
-            else:
-                prediction, self.recurrent_states = self.network(config.state_normalizer(states), self.recurrent_states)
+            prediction, (self.h0, self.c0) = self.network(states, (self.h0, self.c0))
+            self.h0 = self.h0.to(device)
+            self.c0 = self.c0.to(device)
             end = time.time()
 
             self.logger.add_scalar('forward_pass_time', end-start, self.total_steps)
-            #print('forward time', end-start)
-
-            self.done = False
 
             start = time.time()
             next_states, rewards, terminals, info = self.task.step(to_np(prediction['a']))
@@ -59,16 +56,21 @@ class A2CRecurrentAgent(BaseAgent):
                          'm': tensor(1 - terminals).unsqueeze(-1).to(device)})
 
             states = next_states
+            #zero out lstm recurrent state if any of the environments finish
+            self.h0 = self.h0.clone().detach()
+            self.c0 = self.c0.clone().detach()
+            for i, done in enumerate(terminals):
+                if done:
+                    self.h0[i] = torch.zeros(self.hidden_size)
+                    self.c0[i] = torch.zeros(self.hidden_size)
             self.total_steps += config.num_workers
 
         self.states = states
-        prediction, self.recurrent_states = self.network(config.state_normalizer(states))
+        prediction, _ = self.network(states, (self.h0, self.c0))
         # self.smh = [s.detach() for s in self.smh]
 
         storage.add(prediction)
         storage.placeholder()
-
-        pdb.set_trace()
 
         advantages = tensor(np.zeros((config.num_workers, 1))).to(device)
         returns = prediction['v'].detach()
@@ -82,13 +84,11 @@ class A2CRecurrentAgent(BaseAgent):
             storage.adv[i] = advantages.detach()
             storage.ret[i] = returns.detach()
 
-        pdb.set_trace()
+
         log_prob, value, returns, advantages, entropy = storage.cat(['log_pi_a', 'v', 'ret', 'adv', 'ent'])
-        pdb.set_trace()
         policy_loss = -(log_prob * advantages).mean()
         value_loss = 0.5 * (returns - value).pow(2).mean()
         entropy_loss = entropy.mean()
-        pdb.set_trace()
 
         self.logger.add_scalar('advantages', advantages.mean(), self.total_steps)
         self.logger.add_scalar('policy_loss', policy_loss, self.total_steps)
@@ -98,13 +98,10 @@ class A2CRecurrentAgent(BaseAgent):
         start = time.time()
 
         self.optimizer.zero_grad()
-        (policy_loss - config.entropy_weight * entropy_loss +
-         config.value_loss_weight * value_loss).backward()
+        (policy_loss - config.entropy_weight * entropy_loss + config.value_loss_weight * value_loss).backward()
         grad_norm = nn.utils.clip_grad_norm_(self.network.parameters(), config.gradient_clip)
         self.logger.add_scalar('grad_norm', grad_norm, self.total_steps)
         self.optimizer.step()
 
         end = time.time()
         self.logger.add_scalar('backwards_pass_time', end-start, self.total_steps)
-        # [rs.detach_() for rs in self.recurrent_states]
-        # self.recurrent_states = [rs.detach() for rs in self.recurrent_states]

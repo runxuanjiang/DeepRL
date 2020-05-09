@@ -77,8 +77,6 @@ class PPORecurrentAgentGnnRecurrence(BaseAgent):
                 #run the neural net once to get prediction
                 prediction, (self.hp, self.cp, self.hv, self.cv) = self.network(states, (self.hp, self.cp, self.hv, self.cv))
                 #step the environment with the action determined by the prediction
-                # if (self.total_steps >= 800):
-                #     pdb.set_trace()
                 next_states, rewards, terminals, info = self.task.step(to_np(prediction['a']))
                 self.record_online_return(info)
                 rewards = config.reward_normalizer(rewards)
@@ -127,6 +125,7 @@ class PPORecurrentAgentGnnRecurrence(BaseAgent):
 
         advantages = tensor(np.zeros((config.num_workers, 1))).to(device)
         returns = prediction['v'].squeeze(0).detach()
+        
         for i in reversed(range(config.rollout_length)):
             returns = storage.r[i] + config.discount * storage.m[i] * returns
             if not config.use_gae:
@@ -140,12 +139,14 @@ class PPORecurrentAgentGnnRecurrence(BaseAgent):
         storage.a = storage.a[:self.config.rollout_length]
         storage.log_pi_a = storage.log_pi_a[:self.config.rollout_length]
         storage.v = storage.v[:self.config.rollout_length]
+        
 
         actions = torch.stack(storage.a, 1).view(self.config.num_workers * self.config.rollout_length, -1)
         log_probs_old = torch.stack(storage.log_pi_a, 1).view(self.config.num_workers * self.config.rollout_length, -1)
         values = torch.stack(storage.v, 1).view(self.config.num_workers * self.config.rollout_length, -1)
         returns = torch.stack(storage.ret, 1).view(self.config.num_workers * self.config.rollout_length, -1)
         advantages = torch.stack(storage.adv, 1).view(self.config.num_workers * self.config.rollout_length, -1)
+        
 
         log_probs_old = log_probs_old.detach()
         values = values.detach()
@@ -156,6 +157,7 @@ class PPORecurrentAgentGnnRecurrence(BaseAgent):
         cv = torch.stack(storage.cv, 2).view(-1, self.hidden_size)
 
 
+
         advantages = (advantages - advantages.mean()) / advantages.std()
 
         self.logger.add_scalar('advantages', advantages.mean(), self.total_steps)
@@ -163,6 +165,7 @@ class PPORecurrentAgentGnnRecurrence(BaseAgent):
         states = []
         for block in states_mem:
             states.extend(block)
+
 
 
         ############################################################################################
@@ -200,21 +203,23 @@ class PPORecurrentAgentGnnRecurrence(BaseAgent):
 
                     sampled_states = [states[j] for j in (starting_indices + i)]
 
+
+
                     prediction, (sampled_hp, sampled_cp, sampled_hv, sampled_cv) = self.network(sampled_states, (sampled_hp, sampled_cp, sampled_hv, sampled_cv), sampled_actions)
 
 
-                    entropy = prediction['ent'].squeeze(0).mean()
-                    
+                    entropy = prediction['ent'].mean()
                     prediction['log_pi_a'] = prediction['log_pi_a'].squeeze(0)
                     prediction['v'] = prediction['v'].squeeze(0)
 
                     ratio = (prediction['log_pi_a'] - sampled_log_probs_old).exp()
 
-                    #not sure if this line is correct since ratio adn sampled_advantages have different shape
                     obj = ratio * sampled_advantages
                     obj_clipped = ratio.clamp(1.0 - self.config.ppo_ratio_clip,
                                             1.0 + self.config.ppo_ratio_clip) * sampled_advantages
-                    policy_loss = -torch.min(obj, obj_clipped).mean() - config.entropy_weight * prediction['ent'].mean()
+
+                    policy_loss = -torch.min(obj, obj_clipped).mean() - config.entropy_weight * entropy
+
 
 
                     value_loss = 0.5 * (sampled_returns - prediction['v']).pow(2).mean()
