@@ -224,7 +224,7 @@ class PPORecurrentAgentGnnRecurrence(BaseAgent):
 
                     value_loss = 0.5 * (sampled_returns - prediction['v']).pow(2).mean()
 
-                    loss = policy_loss + value_loss
+                    loss = policy_loss + config.value_loss_weight * value_loss
 
                     batch_entropy += entropy.item()
                     batch_policy_loss += policy_loss.item()

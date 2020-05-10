@@ -168,7 +168,7 @@ class PPORecurrentAgentGnn(BaseAgent):
                 value_loss = 0.5 * (sampled_returns - prediction['v']).pow(2).mean()
 
                 self.optimizer.zero_grad()
-                (policy_loss + value_loss).backward()
+                (policy_loss + config.value_loss_weight * value_loss).backward()
                 nn.utils.clip_grad_norm_(self.network.parameters(), config.gradient_clip)
                 self.optimizer.step()
 
