@@ -239,19 +239,19 @@ class PPORecurrentAgentGnnRecurrence(BaseAgent):
                             cv[batch_id + i + 1] = sampled_cv[0][sample_id].detach()
 
 
-            batch_entropy /= self.recurrence
-            batch_policy_loss /= self.recurrence
-            batch_value_loss /= self.recurrence
-            batch_loss /= self.recurrence
+                batch_entropy /= self.recurrence
+                batch_policy_loss /= self.recurrence
+                batch_value_loss /= self.recurrence
+                batch_loss /= self.recurrence
 
-            self.logger.add_scalar('entropy_loss', batch_entropy, self.total_steps)
-            self.logger.add_scalar('policy_loss', batch_policy_loss, self.total_steps)
-            self.logger.add_scalar('value_loss', batch_value_loss, self.total_steps)
+                self.logger.add_scalar('entropy_loss', batch_entropy, self.total_steps)
+                self.logger.add_scalar('policy_loss', batch_policy_loss, self.total_steps)
+                self.logger.add_scalar('value_loss', batch_value_loss, self.total_steps)
 
-            self.optimizer.zero_grad()
-            batch_loss.backward()
-            nn.utils.clip_grad_norm_(self.network.parameters(), config.gradient_clip)
-            self.optimizer.step()
+                self.optimizer.zero_grad()
+                batch_loss.backward()
+                nn.utils.clip_grad_norm_(self.network.parameters(), config.gradient_clip)
+                self.optimizer.step()
 
 
             
