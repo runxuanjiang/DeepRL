@@ -10,9 +10,6 @@ from ..network import *
 from ..component import *
 from .BaseAgent import *
 
-from torch_geometric.data import Data, Batch
-from torch_geometric.transforms import Distance
-
 import numpy
 import numpy.random
 

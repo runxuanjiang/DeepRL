@@ -68,8 +68,6 @@ class A2CRecurrentAgent(BaseAgent):
         storage.add(prediction)
         storage.placeholder()
 
-        pdb.set_trace()
-
         advantages = tensor(np.zeros((config.num_workers, 1))).to(device)
         returns = prediction['v'].detach()
         for i in reversed(range(config.rollout_length)):
@@ -82,13 +80,10 @@ class A2CRecurrentAgent(BaseAgent):
             storage.adv[i] = advantages.detach()
             storage.ret[i] = returns.detach()
 
-        pdb.set_trace()
         log_prob, value, returns, advantages, entropy = storage.cat(['log_pi_a', 'v', 'ret', 'adv', 'ent'])
-        pdb.set_trace()
         policy_loss = -(log_prob * advantages).mean()
         value_loss = 0.5 * (returns - value).pow(2).mean()
         entropy_loss = entropy.mean()
-        pdb.set_trace()
 
         self.logger.add_scalar('advantages', advantages.mean(), self.total_steps)
         self.logger.add_scalar('policy_loss', policy_loss, self.total_steps)
