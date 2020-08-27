@@ -13,7 +13,7 @@ from collections import deque
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-class A2CRecurrentAgent(BaseAgent):
+class A2CRecurrentAgentTarun(BaseAgent):
     def __init__(self, config):
         BaseAgent.__init__(self, config)
         self.config = config
@@ -47,8 +47,8 @@ class A2CRecurrentAgent(BaseAgent):
                 prediction, self.recurrent_states = self.network(config.state_normalizer(states), self.recurrent_states)
             end = time.time()
 
-            print('reserved bytes', torch.cuda.memory_reserved() / (1024 * 1024), 'MB')
-            self.logger.add_scalar('reserved_bytes', torch.cuda.memory_reserved() / (1024 * 1024), self.total_steps)
+            # print('reserved bytes', torch.cuda.memory_reserved() / (1024 * 1024), 'MB')
+            # self.logger.add_scalar('reserved_bytes', torch.cuda.memory_reserved() / (1024 * 1024), self.total_steps)
 
             print('forward time', end-start)
             self.logger.add_scalar('forward_pass_time', end-start, self.total_steps)
@@ -70,8 +70,8 @@ class A2CRecurrentAgent(BaseAgent):
                 print(info)
                 print(to_np(prediction['a']))
                 print(self.total_steps)
-            storage.add({'r': tensor(rewards).unsqueeze(-1).cuda(),
-                         'm': tensor(1 - terminals).unsqueeze(-1).cuda()})
+            storage.add({'r': tensor(rewards).unsqueeze(-1).to(device),
+                         'm': tensor(1 - terminals).unsqueeze(-1).to(device)})
 
             states = next_states
 
@@ -105,7 +105,7 @@ class A2CRecurrentAgent(BaseAgent):
         storage.add(prediction)
         storage.placeholder()
 
-        advantages = tensor(np.zeros((config.num_workers, 1))).cuda()
+        advantages = tensor(np.zeros((config.num_workers, 1))).to(device)
         returns = prediction['v'].detach()
         for i in reversed(range(config.rollout_length)):
             returns = storage.r[i] + config.discount * storage.m[i] * returns

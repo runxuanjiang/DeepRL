@@ -20,7 +20,7 @@ import pdb
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-class PPORecurrentAgentRecurrence(BaseAgent):
+class PPORecurrentAgentRecurrenceTarun(BaseAgent):
     def __init__(self, config):
         BaseAgent.__init__(self, config)
         self.config = config #config file, contains hyperparameters and other info
@@ -279,7 +279,7 @@ class PPORecurrentAgentRecurrence(BaseAgent):
                 self.logger.add_scalar('policy_loss', batch_policy_loss, self.total_steps)
                 self.logger.add_scalar('value_loss', batch_value_loss, self.total_steps)
 
-                self.logger.add_scalar('reserved_bytes', torch.cuda.memory_reserved() / (1024 * 1024), self.total_steps)
+                # self.logger.add_scalar('reserved_bytes', torch.cuda.memory_reserved() / (1024 * 1024), self.total_steps)
 
                 start = time.time()
                 self.optimizer.zero_grad()
