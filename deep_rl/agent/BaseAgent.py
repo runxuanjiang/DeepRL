@@ -10,6 +10,8 @@ from ..utils import *
 import torch.multiprocessing as mp
 from collections import deque
 from skimage.io import imsave
+import os
+from pathlib import Path
 
 
 class BaseAgent:
@@ -17,6 +19,11 @@ class BaseAgent:
         self.config = config
         self.logger = get_logger(tag=config.tag, log_level=config.log_level)
         self.task_ind = 0
+        self.eval_idx = 1
+        self.ep = 0
+
+    def update_eval_idx(self, idx):
+        self.eval_idx = idx
 
     def close(self):
         close_obj(self.task)
@@ -49,12 +56,19 @@ class BaseAgent:
     def eval_episodes(self):
         episodic_returns = []
         for ep in range(self.config.eval_episodes):
+            self.ep = ep
+            out_path = str(Path(os.getcwd()))
+            if not os.path.exists(out_path + '/mol_eval/eval' + str(self.eval_idx) + '/ep' + str(ep)):
+                os.mkdir(out_path + '/mol_eval/eval' + str(self.eval_idx) + '/ep' + str(ep))
+                print('DIRECTORY CREATED: ' + out_path + '/mol_eval/eval' + str(self.eval_idx) + '/ep' + str(ep))
+
             total_rewards = self.eval_episode()
             episodic_returns.append(np.sum(total_rewards))
         self.logger.info('steps %d, episodic_return_test %.2f(%.2f)' % (
             self.total_steps, np.mean(episodic_returns), np.std(episodic_returns) / np.sqrt(len(episodic_returns))
         ))
         self.logger.add_scalar('episodic_return_test', np.mean(episodic_returns), self.total_steps)
+        self.eval_idx += 1
         return {
             'episodic_return_test': np.mean(episodic_returns),
         }
