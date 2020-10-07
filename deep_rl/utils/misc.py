@@ -18,6 +18,11 @@ def run_steps(agent):
     config = agent.config
     agent_name = agent.__class__.__name__
     t0 = time.time()
+    eval_idx = 1
+    out_path = str(Path(os.getcwd()))
+    if not os.path.exists(out_path + '/mol_eval'):
+        os.mkdir(out_path + '/mol_eval')
+        print('DIRECTORY CREATED: ' + out_path + '/mol_eval')
     while True:
         if config.save_interval and not agent.total_steps % config.save_interval:
             agent.save('data/%s-%s-%d' % (agent_name, config.tag, agent.total_steps))
@@ -25,7 +30,12 @@ def run_steps(agent):
             agent.logger.info('steps %d, %.2f steps/s' % (agent.total_steps, config.log_interval / (time.time() - t0)))
             t0 = time.time()
         if config.eval_interval and not agent.total_steps % config.eval_interval:
+            if not os.path.exists(out_path + '/mol_eval/eval' + str(eval_idx)):
+                os.mkdir(out_path + '/mol_eval/eval' + str(eval_idx))
+                print('DIRECTORY CREATED: ' + out_path + '/mol_eval/eval' + str(eval_idx))
+            agent.update_eval_idx(eval_idx)
             agent.eval_episodes()
+            eval_idx += 1
         if config.max_steps and agent.total_steps >= config.max_steps:
             agent.close()
             break
